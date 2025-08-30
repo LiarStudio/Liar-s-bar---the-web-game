@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Liar's Bar </title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root { --gold:#ffcc00; --bg:#0f0f11; --text:#fff; --dead:#f44336; --muted:#bbb; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,Arial,sans-serif;display:flex;align-items:flex-start;justify-content:center;min-height:100vh;padding:18px}
+  .game{width:min(1200px,96vw);display:flex;gap:18px;align-items:flex-start}
+  h1{margin:.2rem 0 1rem;color:var(--gold);text-align:center;width:100%}
+
+  /* LEFT: circle table */
+  .left{flex:1;display:flex;flex-direction:column;align-items:center}
+  .table{position:relative;margin:0 auto;height:480px;max-width:520px;aspect-ratio:1;border-radius:999px}
+  .seat{position:absolute;width:42%;max-width:220px;transform:translate(-50%,-50%);background:#111;border:1px solid #222;border-radius:12px;padding:10px 12px;box-shadow:0 6px 20px rgba(0,0,0,.35);text-align:center}
+  .seat .name{font-weight:700}
+  .status{font-size:.85rem;color:var(--muted);min-height:1.25rem}
+  .die{font-size:40px;font-weight:800;margin:.25rem 0}
+  .bid{font-size:.88rem;color:#9ad;min-height:1.1rem}
+  .active{outline:3px solid var(--gold);box-shadow:0 0 0 6px rgba(255,204,0,.08)}
+  .dead{opacity:.45;filter:grayscale(1)}
+
+  /* Circle positions (clockwise): Top, Right, Bottom(You), Left */
+  #seat2{left:50%;top:11%}      /* Sam (top)   */
+  #seat4{left:92%;top:50%}     /* Mary (right) */
+  #seat1{left:50%;top:92%}     /* You (bottom)       */
+  #seat3{left:8%;top:50%}      /* John (left)  */
+
+  /* RIGHT: sidebar with controls + log */
+  .sidebar{width:360px;min-width:260px;background:#0d0d0e;border:1px solid #1f1f1f;border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:12px}
+  .panel{display:flex;flex-direction:column;gap:8px}
+  .row{display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap}
+  button, select{background:var(--gold);color:#000;border:0;border-radius:10px;padding:10px 12px;font-size:15px;font-weight:700;cursor:pointer}
+  button[disabled],select[disabled]{opacity:.45;cursor:not-allowed}
+  .muted{color:var(--muted)}
+  #log{flex:1;background:#070707;border:1px solid #222;border-radius:8px;padding:10px;overflow:auto;font-family:Consolas,monospace;font-size:14px;line-height:1.36}
+  .small{font-size:13px;color:var(--muted)}
+
+  /* responsive */
+  @media (max-width:980px){
+    .game{flex-direction:column;align-items:center}
+    .sidebar{width:92vw}
+    .table{height:420px;max-width:420px}
+  }
+</style>
+</head>
+<body>
+<div class="game">
+  <div class="left">
+    <h1>🍷 Liar's Bar </h1>
+
+    <div class="table" aria-hidden="false">
+      <!-- Seats clockwise: You (bottom) is #1 -->
+      <div id="seat1" class="seat">
+        <div class="name">You</div>
+        <div class="status" id="status0">Alive</div>
+        <div class="die" id="die0">?</div>
+        <div class="bid" id="bid0"></div>
+      </div>
+
+      <div id="seat3" class="seat">
+        <div class="name">John </div>
+        <div class="status" id="status1">Alive</div>
+        <div class="die" id="die1">?</div>
+        <div class="bid" id="bid1"></div>
+      </div>
+
+      <div id="seat2" class="seat">
+        <div class="name">Sam </div>
+        <div class="status" id="status2">Alive</div>
+        <div class="die" id="die2">?</div>
+        <div class="bid" id="bid2"></div>
+      </div>
+
+      <div id="seat4" class="seat">
+        <div class="name">Mary </div>
+        <div class="status" id="status3">Alive</div>
+        <div class="die" id="die3">?</div>
+        <div class="bid" id="bid3"></div>
+      </div>
+    </div>
+  </div>
+
+  <aside class="sidebar" aria-label="Game controls and log">
+    <div class="panel">
+      <div class="row" style="justify-content:space-between;">
+        <button id="btnStart">Start / Next Round</button>
+        <div style="text-align:right">
+          <div class="small muted">Current bid:</div>
+          <div id="currentBid" class="small muted">—</div>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="small">Your die:</div>
+        <strong id="yourDie">?</strong>
+        <select id="bidValue" aria-label="Choose bid">
+          <option value="1">Bid 1</option><option value="2">Bid 2</option>
+          <option value="3">Bid 3</option><option value="4">Bid 4</option>
+          <option value="5">Bid 5</option><option value="6">Bid 6</option>
+        </select>
+        <button id="btnBid">Make Bid</button>
+        <button id="btnLiar">Call Liar</button>
+      </div>
+    </div>
+
+    <div id="log" aria-live="polite">Press "Start / Next Round" to begin. Game log appears here.</div> <br>
+
+    <div class="small muted">Tip: The log shows revealed dice, eliminations, and who called liar. Use the Start button to rotate rounds.</div>
+  </aside>
+</div>
+
+<script>
+(() => {
+  // --- State ---
+  const N = 4;
+  const players = [
+    { name: "You", human: true,  alive: true, die: 0, seatEl: "#seat1" },
+    { name: "John", human: false, alive: true, die: 0, seatEl: "#seat3" },
+    { name: "Sam", human: false, alive: true, die: 0, seatEl: "#seat2" },
+    { name: "Mary", human: false, alive: true, die: 0, seatEl: "#seat4" },
+  ];
+  let round = 0;
+  let currentPlayer = 0;     // whose turn (index)
+  let startIndex = 0;        // who starts round
+  let currentBid = null;     // {player: idx, value: 1..6}
+  let resolving = false;     // prevent double clicks
+
+  // --- Helpers ---
+  const $ = sel => document.querySelector(sel);
+  const log = (msg) => { const el = $("#log"); el.innerHTML += msg + "<br>"; el.scrollTop = el.scrollHeight; };
+  const aliveCount = () => players.filter(p=>p.alive).length;
+  const nextAlive = (idx) => { let i = (idx+1)%N; while(!players[i].alive) i=(i+1)%N; return i; };
+
+  function rollAllDice() {
+    for (let i=0;i<N;i++) if (players[i].alive) players[i].die = 1 + Math.floor(Math.random()*6);
+  }
+
+  function updateUI() {
+    players.forEach((p,i)=>{
+      const seat = $(p.seatEl);
+      const dieEl = $("#die"+i);
+      const statusEl = $("#status"+i);
+      const bidEl = $("#bid"+i);
+      seat.classList.toggle("dead", !p.alive);
+      seat.classList.toggle("active", i===currentPlayer && p.alive && !resolving);
+      statusEl.textContent = p.alive ? "Alive" : "Eliminated";
+      dieEl.textContent = (p.human && p.alive) ? p.die : "❓";
+      bidEl.textContent = "";
+    });
+    $("#currentBid").textContent = currentBid
+      ? `${players[currentBid.player].name} says “I have a ${currentBid.value}”.`
+      : "—";
+
+    const yourTurn = players[0].alive && currentPlayer===0 && !resolving;
+    $("#btnBid").disabled  = !yourTurn;
+    $("#bidValue").disabled= !yourTurn;
+    $("#btnLiar").disabled = !yourTurn || !currentBid;
+  }
+
+  function startOrNextRound() {
+    if (resolving || aliveCount()<=1) return;
+    round++;
+    if (round === 1) {
+      startIndex = Math.floor(Math.random()*N);
+      while (!players[startIndex].alive) startIndex = (startIndex+1)%N;
+    } else {
+      startIndex = nextAlive(startIndex);
+    }
+    currentPlayer = startIndex;
+    currentBid = null;
+    rollAllDice();
+    $("#yourDie").textContent = players[0].alive ? players[0].die : "—";
+    // keep previous log but add a header for clarity
+    log(`<strong style=\"color:var(--gold)\">🔔 Round ${round} starts. ${players[currentPlayer].name} begins.</strong>`);
+    if (players[0].alive) log(`(Your die is <strong>${players[0].die}</strong> — hidden from others)`);
+    updateUI();
+    if (!players[currentPlayer].human) {
+      setTimeout(aiTurn, 650);
+    }
+  }
+
+  function setBid(playerIdx, value) {
+    currentBid = { player: playerIdx, value: value };
+    $("#bid"+playerIdx).textContent = `Bid: ${value}`;
+    log(`🗣️ ${players[playerIdx].name} bids: “I have a ${value}.”`);
+    currentPlayer = nextAlive(playerIdx);
+    updateUI();
+    if (!players[currentPlayer].human) setTimeout(aiTurn, 700);
+  }
+
+  function resolveChallenge(accuserIdx, bidderIdx) {
+    resolving = true; updateUI();
+    const bidder = players[bidderIdx];
+    log(`⚔️ ${players[accuserIdx].name} calls LIAR on ${bidder.name}!`);
+    const trueVal = bidder.die;
+    $("#die"+bidderIdx).textContent = trueVal; // reveal
+    setTimeout(() => {
+      if (trueVal !== currentBid.value) {
+        log(`❌ Claim was FALSE. ${bidder.name} must drink...`);
+        drink(bidderIdx, () => afterChallenge(accuserIdx, bidderIdx));
+      } else {
+        log(`✅ Claim was TRUE. ${players[accuserIdx].name} must drink...`);
+        drink(accuserIdx, () => afterChallenge(accuserIdx, bidderIdx));
+      }
+    }, 650);
+  }
+
+  function drink(playerIdx, cb) {
+    setTimeout(() => {
+      const poisoned = Math.random() < 0.5;
+      if (poisoned) {
+        players[playerIdx].alive = false;
+        log(`☠️ ${players[playerIdx].name} drank poison and is ELIMINATED.`);
+      } else {
+        log(`🍷 ${players[playerIdx].name} survives the drink.`);
+      }
+      resolving = false; updateUI();
+      cb && cb();
+    }, 700);
+  }
+
+  function afterChallenge(accuserIdx, bidderIdx) {
+    if (aliveCount() <= 1) {
+      const champ = players.find(p=>p.alive);
+      log(`<br>🏆 Winner: <strong>${champ ? champ.name : "No one"}</strong>`);
+      return;
+    }
+    startIndex = nextAlive(accuserIdx);
+    setTimeout(startOrNextRound, 900);
+  }
+
+  // --- Human controls ---
+  $("#btnStart").addEventListener("click", startOrNextRound);
+  $("#btnBid").addEventListener("click", () => {
+    if (resolving || currentPlayer!==0 || !players[0].alive) return;
+    const v = parseInt($("#bidValue").value, 10);
+    if (v>=1 && v<=6) setBid(0, v);
+  });
+  $("#btnLiar").addEventListener("click", () => {
+    if (resolving || currentPlayer!==0 || !players[0].alive) return;
+    if (!currentBid) return;
+    resolveChallenge(0, currentBid.player);
+  });
+
+  // --- Simple AI logic ---
+  function aiTurn() {
+    if (resolving) return;
+    const i = currentPlayer;
+    if (!players[i].alive) { currentPlayer = nextAlive(i); return aiTurn(); }
+
+    if (!currentBid) {
+      const tellTruth = Math.random() < 0.7;
+      const val = tellTruth ? players[i].die : randOther(players[i].die);
+      setBid(i, val);
+      return;
+    } else {
+      const suspicion = 0.35 + (Math.random()*0.2);
+      const call = Math.random() < suspicion;
+      if (call) {
+        resolveChallenge(i, currentBid.player);
+        return;
+      } else {
+        const tellTruth = Math.random() < 0.6;
+        const val = tellTruth ? players[i].die : randOther(players[i].die);
+        setBid(i, val);
+        return;
+      }
+    }
+  }
+
+  function randOther(exclude) { let v = 1 + Math.floor(Math.random()*6); if (v===exclude) v = (v%6)+1; return v; }
+
+  // Auto-start first round
+  startOrNextRound();
+})();
+</script>
+</body>
+</html>
